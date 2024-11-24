@@ -70,3 +70,168 @@ and there are plenty more games available provided by the community. Some of the
 Pterodactyl® Copyright © 2015 - 2022 Dane Everitt and contributors.
 
 Code released under the [MIT License](./LICENSE.md).
+
+# Руководство по установке панели Pterodactyl
+
+## Шаг 1: Установка необходимых компонентов
+
+```bash
+# Добавление команды "add-apt-repository"
+apt -y install software-properties-common curl apt-transport-https ca-certificates gnupg
+```
+
+## Шаг 2: Подключение дополнительных репозиториев
+
+### Для PHP (Ubuntu 20.04 и Ubuntu 22.04)
+```bash
+LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
+```
+
+### Для Redis
+```bash
+curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
+```
+
+### Для MariaDB (Ubuntu 20.04)
+```bash
+curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | sudo bash
+```
+
+## Шаг 3: Обновление списка репозиториев
+```bash
+apt update
+```
+
+## Шаг 4: Установка зависимостей
+
+```bash
+apt -y install php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} mariadb-server nginx tar unzip git redis-server
+
+curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer
+```
+
+## Шаг 5: Загрузка и настройка Pterodactyl
+
+### Создание каталога для панели
+```bash
+mkdir -p /var/www/pterodactyl
+cd /var/www/pterodactyl
+```
+
+### Загрузка и распаковка панели
+```bash
+curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
+tar -xzvf panel.tar.gz
+chmod -R 755 storage/* bootstrap/cache/
+```
+
+## Шаг 6: Настройка базы данных
+
+### Подключение к MariaDB
+```bash
+mariadb -u root -p
+```
+
+### Подключение к MySQL (если используется)
+```bash
+mysql -u root -p
+```
+
+### Создание пользователя и базы данных
+```sql
+CREATE USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY 'yourPassword';
+CREATE DATABASE panel;
+GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1' WITH GRANT OPTION;
+exit
+```
+
+## Шаг 7: Установка панели
+
+### Установка зависимостей с помощью Composer
+```bash
+cp .env.example .env
+COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
+```
+
+### Генерация ключа приложения (только при первой установке)
+```bash
+php artisan key:generate --force
+```
+
+### Настройка окружения
+```bash
+php artisan p:environment:setup
+php artisan p:environment:database
+```
+
+### Настройка почтового сервера
+```bash
+php artisan p:environment:mail
+```
+
+### Выполнение миграций и заполнение базы данных
+```bash
+php artisan migrate --seed --force
+```
+
+### Создание пользователя
+```bash
+php artisan p:user:make
+```
+
+## Шаг 8: Настройка прав доступа
+
+### Для NGINX, Apache или Caddy (не для RHEL / Rocky Linux / AlmaLinux)
+```bash
+chown -R www-data:www-data /var/www/pterodactyl/*
+```
+
+### Для NGINX на RHEL / Rocky Linux / AlmaLinux
+```bash
+chown -R nginx:nginx /var/www/pterodactyl/*
+```
+
+### Для Apache на RHEL / Rocky Linux / AlmaLinux
+```bash
+chown -R apache:apache /var/www/pterodactyl/*
+```
+
+## Шаг 9: Настройка cron-задачи
+
+Добавьте следующую строку в файл crontab:
+```bash
+* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1
+```
+
+## Шаг 10: Настройка службы Pterodactyl Queue Worker
+
+Создайте файл службы:
+```bash
+sudo nano /etc/systemd/system/pteroq.service
+```
+
+Вставьте следующий текст:
+```ini
+[Unit]
+Description=Pterodactyl Queue Worker
+After=redis-server.service
+
+[Service]
+User=www-data
+Group=www-data
+Restart=always
+ExecStart=/usr/bin/php /var/www/pterodactyl/artisan queue:work --queue=high,standard,low --sleep=3 --tries=3
+StartLimitInterval=180
+StartLimitBurst=30
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Включение службы
+```bash
+sudo systemctl enable --now redis-server
+sudo systemctl enable --now pteroq.service
+```
